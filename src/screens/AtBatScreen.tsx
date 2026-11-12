@@ -14,9 +14,16 @@ import AtBatHeader from '../components/AtBatHeader';
 import StrikeZone from '../components/StrikeZone';
 import PitchHistory from '../components/PitchHistory';
 import PitchDetailOverlay from '../components/PitchDetailOverlay';
+import ReplayControls from '../components/ReplayControls';
+import ReplayStatusBar from '../components/ReplayStatusBar';
+import { useReplayEngine } from '../hooks/useReplayEngine';
 import { COLORS } from '../theme/colors';
 
 const API_URL = 'https://diamondiq-api.onrender.com/games/777245/at-bats/1';
+
+// Stable empty array reference — avoids re-triggering the replay reset effect
+// that runs on allPitches identity change when atBat is null.
+const EMPTY_PITCHES: Pitch[] = [];
 
 type Status = 'loading' | 'success' | 'error';
 
@@ -26,14 +33,26 @@ export default function AtBatScreen() {
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [selectedPitch, setSelectedPitch] = useState<Pitch | null>(null);
 
+  // useReplayEngine receives EMPTY_PITCHES before data loads so the hook
+  // initialises safely with zero pitches and no timers scheduled.
+  const replay = useReplayEngine(atBat?.pitches ?? EMPTY_PITCHES);
+
+  // Close the overlay if the user rewinds past the currently selected pitch
+  useEffect(() => {
+    if (
+      selectedPitch !== null &&
+      selectedPitch.number > replay.state.revealedCount
+    ) {
+      setSelectedPitch(null);
+    }
+  }, [replay.state.revealedCount, selectedPitch]);
+
   async function fetchAtBat() {
     setStatus('loading');
     setErrorMsg('');
     try {
       const res = await fetch(API_URL);
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
       const data: AtBat = await res.json();
       setAtBat(data);
       setStatus('success');
@@ -49,11 +68,17 @@ export default function AtBatScreen() {
   }, []);
 
   function handlePitchPress(pitch: Pitch) {
+    // Defence-in-depth: only allow interaction with revealed pitches.
+    // StrikeZone and PitchHistory already receive only revealedPitches,
+    // so future pitches are never rendered as tappable elements.
+    if (pitch.number > replay.state.revealedCount) return;
+    replay.pause();
     setSelectedPitch(pitch);
   }
 
   function handleOverlayClose() {
     setSelectedPitch(null);
+    // Deliberately does NOT call replay.play() — user must press Play explicitly
   }
 
   // ── Loading ──────────────────────────────────────────────────────────────
@@ -92,15 +117,40 @@ export default function AtBatScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header: branding, matchup, inning */}
-        <AtBatHeader atBat={atBat} />
+        {/* Header: branding, matchup, inning — outcome gated on isComplete */}
+        <AtBatHeader atBat={atBat} isComplete={replay.isComplete} />
 
         {/* Divider */}
         <View style={styles.divider} />
 
-        {/* Strike zone */}
+        {/* Replay count + progress label / outcome */}
+        <ReplayStatusBar
+          currentBalls={replay.currentBalls}
+          currentStrikes={replay.currentStrikes}
+          progressLabel={replay.progressLabel}
+          isComplete={replay.isComplete}
+          outcome={atBat.outcome}
+        />
+
+        {/* Playback controls */}
+        <ReplayControls
+          isPlaying={replay.state.isPlaying}
+          isComplete={replay.isComplete}
+          isReady={replay.state.revealedCount === 0}
+          onPlay={replay.play}
+          onPause={replay.pause}
+          onNext={replay.next}
+          onPrevious={replay.previous}
+          onRestart={replay.restart}
+          onReplay={replay.replay}
+        />
+
+        {/* Divider */}
+        <View style={styles.divider} />
+
+        {/* Strike zone — receives only revealed pitches, never future ones */}
         <StrikeZone
-          pitches={atBat.pitches}
+          pitches={replay.revealedPitches}
           selectedPitchNumber={selectedPitch?.number ?? null}
           onPitchPress={handlePitchPress}
         />
@@ -108,9 +158,9 @@ export default function AtBatScreen() {
         {/* Divider */}
         <View style={styles.divider} />
 
-        {/* Pitch history */}
+        {/* Pitch history — receives only revealed pitches */}
         <PitchHistory
-          pitches={atBat.pitches}
+          pitches={replay.revealedPitches}
           selectedPitchNumber={selectedPitch?.number ?? null}
           onPitchPress={handlePitchPress}
         />
@@ -127,7 +177,7 @@ export default function AtBatScreen() {
         </View>
       </ScrollView>
 
-      {/* Pitch detail overlay */}
+      {/* Pitch detail overlay — only opened via handlePitchPress which guards revealedCount */}
       <PitchDetailOverlay pitch={selectedPitch} onClose={handleOverlayClose} />
     </SafeAreaView>
   );

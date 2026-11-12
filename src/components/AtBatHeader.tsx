@@ -4,9 +4,10 @@ import { COLORS } from '../theme/colors';
 
 interface Props {
   atBat: AtBat;
+  isComplete: boolean; // controls whether the outcome is revealed
 }
 
-export default function AtBatHeader({ atBat }: Props) {
+export default function AtBatHeader({ atBat, isComplete }: Props) {
   const halfLabel = atBat.half_inning === 'top' ? 'Top' : 'Bot';
   const inningLabel = `${halfLabel} ${atBat.inning}`;
 
@@ -33,8 +34,12 @@ export default function AtBatHeader({ atBat }: Props) {
 
       <View style={styles.metaRow}>
         <Text style={styles.meta}>{inningLabel}</Text>
-        <Text style={styles.metaSep}>·</Text>
-        <Text style={styles.outcome}>{atBat.outcome.toUpperCase()}</Text>
+        {isComplete && (
+          <>
+            <Text style={styles.metaSep}>·</Text>
+            <Text style={styles.outcome}>{atBat.outcome.toUpperCase()}</Text>
+          </>
+        )}
       </View>
     </View>
   );
