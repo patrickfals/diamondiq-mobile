@@ -5,27 +5,37 @@ interface Props {
   currentBalls: number;
   currentStrikes: number;
   progressLabel: string;
-  isComplete: boolean;
-  outcome: string; // only rendered when isComplete === true
+  /**
+   * The at-bat outcome string uppercased, or null before completion.
+   * Pre-computed by AtBatScreen: replay.isComplete ? atBat.outcome.toUpperCase() : null.
+   * When non-null, this replaces the entire status bar with the final outcome display.
+   */
+  finalOutcomeLabel: string | null;
+  /**
+   * Formatted result of the most recently revealed pitch.
+   * Null before any pitch is revealed.
+   * Derived from revealedPitches in AtBatScreen — no separate useState.
+   */
+  currentPitchResult: string | null;
 }
 
 export default function ReplayStatusBar({
   currentBalls,
   currentStrikes,
   progressLabel,
-  isComplete,
-  outcome,
+  finalOutcomeLabel,
+  currentPitchResult,
 }: Props) {
   return (
     <View style={styles.container}>
-      {isComplete ? (
-        // When complete: show only the outcome result — no ball-strike count
+      {finalOutcomeLabel !== null ? (
+        // When complete: show only the at-bat outcome — no ball-strike count
         <View style={styles.outcomeFull}>
           <Text style={styles.outcomeLabel}>RESULT</Text>
-          <Text style={styles.outcomeValue}>{outcome.toUpperCase()}</Text>
+          <Text style={styles.outcomeValue}>{finalOutcomeLabel}</Text>
         </View>
       ) : (
-        // During replay: show count on the left, progress label on the right
+        // During replay: count on the left; progress label + current pitch result on the right
         <>
           <View style={styles.countBlock}>
             <Text style={styles.countLabel}>COUNT</Text>
@@ -35,6 +45,9 @@ export default function ReplayStatusBar({
           </View>
           <View style={styles.progressBlock}>
             <Text style={styles.progressLabel}>{progressLabel}</Text>
+            {currentPitchResult !== null && (
+              <Text style={styles.pitchResult}>{currentPitchResult}</Text>
+            )}
           </View>
         </>
       )}
@@ -81,6 +94,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: COLORS.muted,
+  },
+  pitchResult: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginTop: 2,
   },
   // ── Complete state ──────────────────────────────────────────────────────────
   outcomeFull: {

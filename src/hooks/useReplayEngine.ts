@@ -129,7 +129,7 @@ export function deriveReplayValues(
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 const INITIAL_STATE: ReplayState = { revealedCount: 0, isPlaying: false };
-const TICK_INTERVAL_MS = 2500;
+const TICK_INTERVAL_MS = 3000;
 
 export interface UseReplayEngineResult extends ReplayDerived {
   state: ReplayState;

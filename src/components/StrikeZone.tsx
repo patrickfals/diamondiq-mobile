@@ -1,6 +1,8 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Pitch } from '../types/atbat';
 import { COLORS } from '../theme/colors';
+import { getPitchTypeColor } from '../utils/pitchTypeColors';
+import { classifyBattedBall } from '../utils/classifyBattedBall';
 
 /**
  * Strike-zone coordinate system
@@ -36,6 +38,23 @@ const SZ_Z_THIRDS = [SZ_Z_MIN, SZ_Z_MIN + (SZ_Z_MAX - SZ_Z_MIN) / 3, SZ_Z_MIN + 
 const CANVAS_WIDTH = 260;
 const CANVAS_HEIGHT = 300;
 
+// Pitch marker radius (unchanged from original)
+const MARKER_RADIUS = 12;
+const MARKER_SIZE = MARKER_RADIUS * 2; // 24
+
+// Outcome ring: 4px outside the marker on each side
+const OUTCOME_RING_EXTRA = 4;
+const OUTCOME_RING_SIZE = MARKER_SIZE + OUTCOME_RING_EXTRA * 2; // 32
+
+// Selection ring: 4px outside the outcome ring on each side
+const SELECTION_RING_EXTRA = OUTCOME_RING_EXTRA + 4;
+const SELECTION_RING_SIZE = MARKER_SIZE + SELECTION_RING_EXTRA * 2; // 40
+
+// Outcome ring colors
+const RING_HIT_COLOR = '#19B99B';
+const RING_OUT_COLOR = '#EF4444';
+const RING_SELECTION_COLOR = '#FFFFFF';
+
 function toCanvasX(plateX: number): number {
   return ((plateX - PLOT_X_MIN) / (PLOT_X_MAX - PLOT_X_MIN)) * CANVAS_WIDTH;
 }
@@ -68,9 +87,26 @@ interface Props {
   pitches: Pitch[];
   selectedPitchNumber: number | null;
   onPitchPress: (pitch: Pitch) => void;
+  /**
+   * Classified batted-ball outcome for the at-bat, or null.
+   * Pre-computed by AtBatScreen: null until isComplete, then classifyBattedBall(atBat.outcome).
+   * Only the final pitch (number === finalPitchNumber) uses this value.
+   */
+  revealedOutcome: 'hit' | 'out' | null;
+  /**
+   * The pitch.number of the last pitch in the at-bat.
+   * Derived by AtBatScreen from the actual number field of the last pitch.
+   */
+  finalPitchNumber: number | null;
 }
 
-export default function StrikeZone({ pitches, selectedPitchNumber, onPitchPress }: Props) {
+export default function StrikeZone({
+  pitches,
+  selectedPitchNumber,
+  onPitchPress,
+  revealedOutcome,
+  finalPitchNumber,
+}: Props) {
   return (
     <View style={styles.wrapper}>
       <Text style={styles.sectionTitle}>STRIKE ZONE</Text>
@@ -105,32 +141,90 @@ export default function StrikeZone({ pitches, selectedPitchNumber, onPitchPress 
         </Text>
 
         {/* Pitch markers */}
-        {pitches.map((pitch, idx) => {
+        {pitches.map((pitch) => {
           const cx = toCanvasX(pitch.plate_x);
           const cy = toCanvasY(pitch.plate_z);
-          const color = COLORS.pitchColors[idx % COLORS.pitchColors.length];
+          const color = getPitchTypeColor(pitch.type);
           const isSelected = pitch.number === selectedPitchNumber;
+          const isFinalPitch = pitch.number === finalPitchNumber;
+
+          // Outcome ring: only the final pitch, only when revealedOutcome is set
+          const showOutcomeRing = isFinalPitch && revealedOutcome !== null;
+          const outcomeRingColor = revealedOutcome === 'hit' ? RING_HIT_COLOR : RING_OUT_COLOR;
+
+          // Center of the marker in canvas coordinates
+          const markerCenterX = cx - MARKER_RADIUS;
+          const markerCenterY = cy - MARKER_RADIUS;
 
           return (
-            <TouchableOpacity
+            <View
               key={pitch.number}
-              onPress={() => onPitchPress(pitch)}
               style={[
-                styles.pitchMarker,
+                styles.markerContainer,
                 {
-                  left: cx - (isSelected ? 14 : 12),
-                  top: cy - (isSelected ? 14 : 12),
-                  width: isSelected ? 28 : 24,
-                  height: isSelected ? 28 : 24,
-                  borderRadius: isSelected ? 14 : 12,
-                  backgroundColor: color,
-                  borderWidth: isSelected ? 2 : 1.5,
-                  borderColor: isSelected ? '#fff' : 'rgba(255,255,255,0.5)',
+                  left: cx - SELECTION_RING_SIZE / 2,
+                  top: cy - SELECTION_RING_SIZE / 2,
+                  width: SELECTION_RING_SIZE,
+                  height: SELECTION_RING_SIZE,
                 },
               ]}
             >
-              <Text style={styles.pitchMarkerText}>{pitch.number}</Text>
-            </TouchableOpacity>
+              {/* Selection ring — outermost layer, pointer-events none */}
+              {isSelected && (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.ring,
+                    {
+                      width: SELECTION_RING_SIZE,
+                      height: SELECTION_RING_SIZE,
+                      borderRadius: SELECTION_RING_SIZE / 2,
+                      borderColor: RING_SELECTION_COLOR,
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                    },
+                  ]}
+                />
+              )}
+
+              {/* Outcome ring — middle layer, pointer-events none */}
+              {showOutcomeRing && (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.ring,
+                    {
+                      width: OUTCOME_RING_SIZE,
+                      height: OUTCOME_RING_SIZE,
+                      borderRadius: OUTCOME_RING_SIZE / 2,
+                      borderColor: outcomeRingColor,
+                      position: 'absolute',
+                      left: (SELECTION_RING_SIZE - OUTCOME_RING_SIZE) / 2,
+                      top: (SELECTION_RING_SIZE - OUTCOME_RING_SIZE) / 2,
+                    },
+                  ]}
+                />
+              )}
+
+              {/* Center marker — TouchableOpacity at original 24×24 size */}
+              <TouchableOpacity
+                onPress={() => onPitchPress(pitch)}
+                style={[
+                  styles.pitchMarker,
+                  {
+                    left: markerCenterX - (cx - SELECTION_RING_SIZE / 2),
+                    top: markerCenterY - (cy - SELECTION_RING_SIZE / 2),
+                    width: MARKER_SIZE,
+                    height: MARKER_SIZE,
+                    borderRadius: MARKER_RADIUS,
+                    backgroundColor: color,
+                  },
+                ]}
+              >
+                <Text style={styles.pitchMarkerText}>{pitch.number}</Text>
+              </TouchableOpacity>
+            </View>
           );
         })}
       </View>
@@ -174,6 +268,19 @@ const styles = StyleSheet.create({
     fontSize: 9,
     color: COLORS.muted,
     opacity: 0.8,
+  },
+
+  // Container that holds all three ring layers, centered on the marker
+  markerContainer: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Shared style for outcome ring and selection ring (border only, transparent fill)
+  ring: {
+    borderWidth: 2.5,
+    backgroundColor: 'transparent',
   },
 
   pitchMarker: {
