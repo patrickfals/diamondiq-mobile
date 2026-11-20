@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,22 +10,20 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AtBat, Pitch } from '../types/atbat';
-import AtBatHeader from '../components/AtBatHeader';
-import StrikeZone from '../components/StrikeZone';
-import PitchHistory from '../components/PitchHistory';
+import StrikeZoneCard from '../components/StrikeZoneCard';
 import PitchDetailOverlay from '../components/PitchDetailOverlay';
-import ReplayControls from '../components/ReplayControls';
-import ReplayStatusBar from '../components/ReplayStatusBar';
+import MatchupBug from '../components/MatchupBug';
+import AICommentaryCard from '../components/AICommentaryCard';
 import { useReplayEngine } from '../hooks/useReplayEngine';
 import { COLORS } from '../theme/colors';
 import { classifyBattedBall } from '../utils/classifyBattedBall';
 import { getPitchTypeColor } from '../utils/pitchTypeColors';
 import { formatPitchResult } from '../utils/formatPitchResult';
+import { KnowledgeLevel } from '../data/commentaryData';
 
 const API_URL = 'https://diamondiq-api.onrender.com/games/777245/at-bats/8';
 
-// Stable empty array reference — avoids re-triggering the replay reset effect
-// that runs on allPitches identity change when atBat is null.
+// Stable empty array — avoids re-triggering the replay reset effect
 const EMPTY_PITCHES: Pitch[] = [];
 
 type Status = 'loading' | 'success' | 'error';
@@ -36,51 +34,49 @@ export default function AtBatScreen() {
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [selectedPitch, setSelectedPitch] = useState<Pitch | null>(null);
 
-  // useReplayEngine receives EMPTY_PITCHES before data loads so the hook
-  // initialises safely with zero pitches and no timers scheduled.
+  // Knowledge level persists across rewind / restart / replay
+  const [selectedLevel, setSelectedLevel] = useState<KnowledgeLevel>('learning');
+
+  // Evidence highlight: lifted here so StrikeZoneCard and AICommentaryCard share one source
+  const [evidencePitches, setEvidencePitches] = useState<number[] | null>(null);
+
   const replay = useReplayEngine(atBat?.pitches ?? EMPTY_PITCHES);
 
-  // ── Shared derived values — computed once, passed to child components ─────
+  // ── Clear evidence on replay navigation ──────────────────────────────────────
+  useEffect(() => {
+    setEvidencePitches(null);
+  }, [replay.state.revealedCount]);
 
-  // finalPitchNumber: the number field of the last pitch in the array.
-  // Handles empty array safely — null means no pitches loaded yet.
+  // ── Derived values ───────────────────────────────────────────────────────────
+
   const finalPitchNumber: number | null = useMemo(() => {
     const pitches = atBat?.pitches;
     if (!pitches || pitches.length === 0) return null;
     return pitches[pitches.length - 1].number;
   }, [atBat]);
 
-  // revealedOutcome: null until replay is complete; classified outcome after.
-  // Gated here so StrikeZone, PitchHistory, and PitchDetailOverlay never
-  // receive the raw outcome string or isComplete boolean for outcome-ring logic.
   const revealedOutcome = replay.isComplete && atBat
     ? classifyBattedBall(atBat.outcome)
     : null;
 
-  // finalOutcomeLabel: the at-bat outcome uppercased, or null before completion.
-  // Centralized here so no child component independently decides when to reveal it.
-  // All components that show the outcome string receive this single value.
   const finalOutcomeLabel: string | null = replay.isComplete && atBat
     ? atBat.outcome.toUpperCase()
     : null;
 
-  // currentPitchResult: formatted result of the most recently revealed pitch.
-  // Null before any pitch is revealed. Derived from revealedPitches — no useState.
-  // For the final pitch when complete, the caller (ReplayStatusBar) receives
-  // finalOutcomeLabel and shows that instead — currentPitchResult is not used
-  // when finalOutcomeLabel is non-null.
   const currentPitchResult: string | null = useMemo(() => {
     const len = replay.revealedPitches.length;
     if (len === 0) return null;
     return formatPitchResult(replay.revealedPitches[len - 1].result);
   }, [replay.revealedPitches]);
 
-  // ── Pitch-type legend — derived from revealedPitches, no separate state ───
-  //
-  // Anti-spoiler: revealedPitches already only contains pitches up to
-  // revealedCount, so future pitch types are never included.
-  //
-  // Shape: [{ type, color, count }, ...] — in order of first appearance.
+  const currentPitchType: string | null = useMemo(() => {
+    const len = replay.revealedPitches.length;
+    if (len === 0) return null;
+    return replay.revealedPitches[len - 1].type;
+  }, [replay.revealedPitches]);
+
+  // Legend: pitch types seen so far, in order of first appearance
+  // Anti-spoiler: derived from revealedPitches only
   const legendItems = useMemo(() => {
     const seen: { type: string; color: string; count: number }[] = [];
     const typeIndex = new Map<string, number>();
@@ -96,15 +92,14 @@ export default function AtBatScreen() {
     return seen;
   }, [replay.revealedPitches]);
 
-  // Close the overlay if the user rewinds past the currently selected pitch
+  // Close overlay if the user rewinds past the selected pitch
   useEffect(() => {
-    if (
-      selectedPitch !== null &&
-      selectedPitch.number > replay.state.revealedCount
-    ) {
+    if (selectedPitch !== null && selectedPitch.number > replay.state.revealedCount) {
       setSelectedPitch(null);
     }
   }, [replay.state.revealedCount, selectedPitch]);
+
+  // ── Data loading ─────────────────────────────────────────────────────────────
 
   async function fetchAtBat() {
     setStatus('loading');
@@ -122,14 +117,11 @@ export default function AtBatScreen() {
     }
   }
 
-  useEffect(() => {
-    fetchAtBat();
-  }, []);
+  useEffect(() => { fetchAtBat(); }, []);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────────
 
   function handlePitchPress(pitch: Pitch) {
-    // Defence-in-depth: only allow interaction with revealed pitches.
-    // StrikeZone and PitchHistory already receive only revealedPitches,
-    // so future pitches are never rendered as tappable elements.
     if (pitch.number > replay.state.revealedCount) return;
     replay.pause();
     setSelectedPitch(pitch);
@@ -137,10 +129,19 @@ export default function AtBatScreen() {
 
   function handleOverlayClose() {
     setSelectedPitch(null);
-    // Deliberately does NOT call replay.play() — user must press Play explicitly
   }
 
-  // ── Loading ──────────────────────────────────────────────────────────────
+  const handleEvidenceHighlight = useCallback((pitches: number[] | null) => {
+    setEvidencePitches(pitches);
+  }, []);
+
+  // onOpenWorkflow: pauses the replay so the 3s auto-advance doesn't fire
+  // while the workflow animation is running and kick the card back to commentary.
+  const handleOpenWorkflow = useCallback(() => {
+    replay.pause();
+  }, [replay]);
+
+  // ── Loading ──────────────────────────────────────────────────────────────────
   if (status === 'loading') {
     return (
       <SafeAreaView style={styles.centered}>
@@ -151,7 +152,7 @@ export default function AtBatScreen() {
     );
   }
 
-  // ── Error ────────────────────────────────────────────────────────────────
+  // ── Error ─────────────────────────────────────────────────────────────────────
   if (status === 'error' || !atBat) {
     return (
       <SafeAreaView style={styles.centered}>
@@ -166,98 +167,117 @@ export default function AtBatScreen() {
     );
   }
 
-  // ── Success ──────────────────────────────────────────────────────────────
+  // ── Success ───────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.root}>
       <StatusBar style="light" />
 
+      {/* Scrollable content: header, matchup, strike zone, commentary */}
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header: branding, matchup, inning, AVG/ERA, outcome gated on isComplete */}
-        <AtBatHeader atBat={atBat} isComplete={replay.isComplete} />
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* Replay count + current pitch result + final outcome (gated) */}
-        <ReplayStatusBar
-          currentBalls={replay.currentBalls}
-          currentStrikes={replay.currentStrikes}
-          progressLabel={replay.progressLabel}
-          finalOutcomeLabel={finalOutcomeLabel}
-          currentPitchResult={currentPitchResult}
-        />
-
-        {/* Playback controls */}
-        <ReplayControls
-          isPlaying={replay.state.isPlaying}
-          isComplete={replay.isComplete}
-          isReady={replay.state.revealedCount === 0}
-          onPlay={replay.play}
-          onPause={replay.pause}
-          onNext={replay.next}
-          onPrevious={replay.previous}
-          onRestart={replay.restart}
-          onReplay={replay.replay}
-        />
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* Strike zone — receives only revealed pitches, never future ones */}
-        <StrikeZone
-          pitches={replay.revealedPitches}
-          selectedPitchNumber={selectedPitch?.number ?? null}
-          onPitchPress={handlePitchPress}
-          revealedOutcome={revealedOutcome}
-          finalPitchNumber={finalPitchNumber}
-        />
-
-        {/* Pitch-type legend — derived from revealedPitches via useMemo, no separate state */}
-        {legendItems.length > 0 && (
-          <View style={styles.legend}>
-            <Text style={styles.legendTitle}>PITCH TYPES SEEN</Text>
-            <View style={styles.legendItems}>
-              {legendItems.map((item) => (
-                <View key={item.type} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: item.color }]} />
-                  <Text style={styles.legendLabel}>{item.type}</Text>
-                  <Text style={styles.legendCount}>×{item.count}</Text>
-                </View>
-              ))}
+        {/* ── A: Header row ──────────────────────────────────────────────────── */}
+        <View style={styles.header}>
+          <View style={styles.headerBrand}>
+            <Text style={styles.wordmark}>DiamondIQ</Text>
+            <View style={styles.replayBadge}>
+              <Text style={styles.replayBadgeText}>GAME REPLAY</Text>
             </View>
           </View>
-        )}
+        </View>
 
-        {/* Divider */}
-        <View style={styles.divider} />
+        {/* ── B: Matchup bug ─────────────────────────────────────────────────── */}
+        <MatchupBug
+          atBat={atBat}
+          currentBalls={replay.currentBalls}
+          currentStrikes={replay.currentStrikes}
+          revealedCount={replay.state.revealedCount}
+          isComplete={replay.isComplete}
+          finalOutcomeLabel={finalOutcomeLabel}
+          onRestart={replay.restart}
+        />
 
-        {/* Pitch history — receives only revealed pitches */}
-        <PitchHistory
+        {/* ── C: Strike zone card ────────────────────────────────────────────── */}
+        <StrikeZoneCard
           pitches={replay.revealedPitches}
           selectedPitchNumber={selectedPitch?.number ?? null}
           onPitchPress={handlePitchPress}
           revealedOutcome={revealedOutcome}
           finalPitchNumber={finalPitchNumber}
-          finalOutcomeLabel={finalOutcomeLabel}
+          evidenceHighlight={evidencePitches}
+          legendItems={legendItems}
+          currentPitchResult={currentPitchResult}
+          currentPitchType={currentPitchType}
         />
 
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* AI analysis placeholder */}
-        <View style={styles.aiSection}>
-          <Text style={styles.aiSectionTitle}>STORY OF THE AT-BAT</Text>
-          <View style={styles.aiCard}>
-            <Text style={styles.aiComingSoon}>AI analysis integration coming soon.</Text>
-          </View>
-        </View>
+        {/* ── D: AI commentary / workflow card ───────────────────────────────── */}
+        <AICommentaryCard
+          revealedCount={replay.state.revealedCount}
+          selectedLevel={selectedLevel}
+          onLevelChange={setSelectedLevel}
+          onEvidenceHighlight={handleEvidenceHighlight}
+          evidenceActive={evidencePitches !== null}
+          onOpenWorkflow={handleOpenWorkflow}
+        />
       </ScrollView>
 
-      {/* Pitch detail overlay — only opened via handlePitchPress which guards revealedCount */}
+      {/* ── E: Playback controls ─────────────────────────────────────────────── */}
+      <View style={styles.controls}>
+        {/* Previous */}
+        <TouchableOpacity
+          style={[styles.circleBtn, replay.state.revealedCount === 0 && styles.circleBtnDisabled]}
+          onPress={replay.previous}
+          disabled={replay.state.revealedCount === 0}
+          accessibilityLabel="Previous pitch"
+        >
+          <Text style={[styles.circleBtnIcon, replay.state.revealedCount === 0 && styles.iconDimmed]}>
+            ‹
+          </Text>
+        </TouchableOpacity>
+
+        {/* Play / Pause / Replay */}
+        {replay.isComplete ? (
+          <TouchableOpacity
+            style={styles.playPill}
+            onPress={replay.replay}
+            accessibilityLabel="Replay at-bat from beginning"
+          >
+            <Text style={styles.playPillText}>↺  Replay</Text>
+          </TouchableOpacity>
+        ) : replay.state.isPlaying ? (
+          <TouchableOpacity
+            style={styles.playPill}
+            onPress={replay.pause}
+            accessibilityLabel="Pause replay"
+          >
+            <Text style={styles.playPillText}>⏸  Pause</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.playPill}
+            onPress={replay.play}
+            accessibilityLabel="Play replay"
+          >
+            <Text style={styles.playPillText}>▶  Play</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Next */}
+        <TouchableOpacity
+          style={[styles.circleBtn, replay.isComplete && styles.circleBtnDisabled]}
+          onPress={replay.next}
+          disabled={replay.isComplete}
+          accessibilityLabel="Next pitch"
+        >
+          <Text style={[styles.circleBtnIcon, replay.isComplete && styles.iconDimmed]}>
+            ›
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Pitch detail overlay */}
       <PitchDetailOverlay
         pitch={selectedPitch}
         onClose={handleOverlayClose}
@@ -269,9 +289,16 @@ export default function AtBatScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.bg },
-  scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 40 },
+  root: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 16,
+  },
 
   centered: {
     flex: 1,
@@ -294,62 +321,84 @@ const styles = StyleSheet.create({
   },
   retryBtnText: { fontSize: 14, fontWeight: '700', color: '#fff' },
 
-  divider: { height: 1, backgroundColor: COLORS.border, marginHorizontal: 16, marginVertical: 4 },
-
-  // ── Pitch-type legend ──────────────────────────────────────────────────────
-  legend: {
-    marginHorizontal: 16,
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  legendTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.muted,
-    letterSpacing: 1.2,
-    marginBottom: 6,
-  },
-  legendItems: {
+  // ── Header ──────────────────────────────────────────────────────────────────
+  header: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 8,
+  },
+  headerBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
   },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    borderRadius: 6,
+  wordmark: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: COLORS.accent,
+    letterSpacing: 0.3,
+  },
+  replayBadge: {
+    backgroundColor: COLORS.accentDim,
+    borderRadius: 5,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
+    borderColor: COLORS.accentBorder,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
   },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  legendLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: COLORS.text,
-    marginRight: 4,
-  },
-  legendCount: {
-    fontSize: 11,
-    color: COLORS.muted,
+  replayBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: COLORS.accent,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
   },
 
-  aiSection: { marginHorizontal: 16, marginTop: 12 },
-  aiSectionTitle: { fontSize: 11, fontWeight: '700', color: COLORS.muted, letterSpacing: 1.2, marginBottom: 8 },
-  aiCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 16,
+  // ── Playback controls ────────────────────────────────────────────────────────
+  controls: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    gap: 16,
   },
-  aiComingSoon: { fontSize: 13, color: COLORS.muted, fontStyle: 'italic' },
+  circleBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1.5,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  circleBtnDisabled: {
+    opacity: 0.35,
+  },
+  circleBtnIcon: {
+    fontSize: 26,
+    color: COLORS.text,
+    lineHeight: 30,
+  },
+  iconDimmed: {
+    opacity: 0.4,
+  },
+  playPill: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 27,
+    paddingHorizontal: 32,
+    height: 54,
+    minWidth: 168,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playPillText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
 });

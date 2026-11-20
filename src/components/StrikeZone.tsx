@@ -98,6 +98,11 @@ interface Props {
    * Derived by AtBatScreen from the actual number field of the last pitch.
    */
   finalPitchNumber: number | null;
+  /**
+   * When set, only these pitch numbers are fully visible; all other revealed
+   * pitches are dimmed to 30% opacity. null/undefined = no dimming.
+   */
+  evidenceHighlight?: number[] | null;
 }
 
 export default function StrikeZone({
@@ -106,6 +111,7 @@ export default function StrikeZone({
   onPitchPress,
   revealedOutcome,
   finalPitchNumber,
+  evidenceHighlight,
 }: Props) {
   return (
     <View style={styles.wrapper}>
@@ -147,6 +153,11 @@ export default function StrikeZone({
           const color = getPitchTypeColor(pitch.type);
           const isSelected = pitch.number === selectedPitchNumber;
           const isFinalPitch = pitch.number === finalPitchNumber;
+          // Evidence dimming: when active, non-evidence pitches dim to 30%
+          const isDimmed =
+            evidenceHighlight != null &&
+            evidenceHighlight.length > 0 &&
+            !evidenceHighlight.includes(pitch.number);
 
           // Outcome ring: only the final pitch, only when revealedOutcome is set
           const showOutcomeRing = isFinalPitch && revealedOutcome !== null;
@@ -166,6 +177,7 @@ export default function StrikeZone({
                   top: cy - SELECTION_RING_SIZE / 2,
                   width: SELECTION_RING_SIZE,
                   height: SELECTION_RING_SIZE,
+                  opacity: isDimmed ? 0.3 : 1,
                 },
               ]}
             >
