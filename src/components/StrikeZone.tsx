@@ -1,107 +1,87 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { Pitch } from '../types/atbat';
 import { COLORS } from '../theme/colors';
-import { getPitchTypeColor } from '../utils/pitchTypeColors';
-import { classifyBattedBall } from '../utils/classifyBattedBall';
+import { getResultCategory, getResultColor } from '../utils/pitchResultStyle';
 
 /**
- * Strike-zone coordinate system
- * ─────────────────────────────
- * MLB plate_x:  left = negative, right = positive (catcher's view)
- *               strike-zone horizontal edges ≈ ±0.708 ft (17-inch plate)
- * MLB plate_z:  vertical feet above ground
- *               approximate strike zone: 1.5 ft (bottom) to 3.5 ft (top)
+ * StrikeZone — new design spec
  *
- * Plotting area rendered: plate_x ∈ [−1.5, +1.5], plate_z ∈ [1.0, 4.0]
- * Y-axis is inverted for display (higher z → smaller screen Y).
+ * Coordinate system
+ * ─────────────────
+ * plate_x: left = negative, right = positive (catcher's view)
+ * plate_z: feet above ground (vertical)
+ * Visible range: x centered at 0, z ∈ [1.4, 4.5]
+ * True proportions: one uniform scale for x and y so the zone is not
+ * stretched. Zone width = 1.416 ft (±0.708). Zone height = 2.0 ft (1.5–3.5).
  *
- * The inner 3×3 strike-zone grid covers [−0.708, +0.708] × [1.5, 3.5].
+ * Canvas: 166 × 245 px (fits the center column of the hero card).
  */
 
-// Physical extents of the rendered plotting area (feet)
-const PLOT_X_MIN = -1.5;
-const PLOT_X_MAX = 1.5;
-const PLOT_Z_MIN = 1.0;
-const PLOT_Z_MAX = 4.0;
+// ── Canvas dimensions ────────────────────────────────────────────────────────
+const CANVAS_W = 166;
+const CANVAS_H = 245;
 
-// Strike-zone boundaries (approximate — batter-specific unavailable)
+// ── Physical extents (feet) ──────────────────────────────────────────────────
+const Z_MIN = 1.4;
+const Z_MAX = 4.5;
+const Z_RANGE = Z_MAX - Z_MIN; // 3.1 ft
+
+// Uniform scale: fit the z-range into the canvas height
+const SCALE = CANVAS_H / Z_RANGE; // px per foot
+
+// X-range derived from the same scale so aspect ratio is 1:1
+const X_HALF = CANVAS_W / 2 / SCALE; // half-width in feet
+const X_MIN = -X_HALF;
+const X_MAX =  X_HALF;
+
+// ── Strike-zone boundaries ───────────────────────────────────────────────────
 const SZ_X_MIN = -0.708;
-const SZ_X_MAX = 0.708;
-const SZ_Z_MIN = 1.5;
-const SZ_Z_MAX = 3.5;
+const SZ_X_MAX =  0.708;
+const SZ_Z_MIN =  1.5;
+const SZ_Z_MAX =  3.5;
 
-// Grid cell thresholds for the 3-column / 3-row zone
-const SZ_X_THIRDS = [SZ_X_MIN, SZ_X_MIN + (SZ_X_MAX - SZ_X_MIN) / 3, SZ_X_MIN + (2 * (SZ_X_MAX - SZ_X_MIN)) / 3, SZ_X_MAX];
-const SZ_Z_THIRDS = [SZ_Z_MIN, SZ_Z_MIN + (SZ_Z_MAX - SZ_Z_MIN) / 3, SZ_Z_MIN + (2 * (SZ_Z_MAX - SZ_Z_MIN)) / 3, SZ_Z_MAX];
-
-// Canvas dimensions (logical pixels)
-const CANVAS_WIDTH = 260;
-const CANVAS_HEIGHT = 300;
-
-// Pitch marker radius (unchanged from original)
-const MARKER_RADIUS = 12;
-const MARKER_SIZE = MARKER_RADIUS * 2; // 24
-
-// Outcome ring: 4px outside the marker on each side
-const OUTCOME_RING_EXTRA = 4;
-const OUTCOME_RING_SIZE = MARKER_SIZE + OUTCOME_RING_EXTRA * 2; // 32
-
-// Selection ring: 4px outside the outcome ring on each side
-const SELECTION_RING_EXTRA = OUTCOME_RING_EXTRA + 4;
-const SELECTION_RING_SIZE = MARKER_SIZE + SELECTION_RING_EXTRA * 2; // 40
-
-// Outcome ring colors
-const RING_HIT_COLOR = '#19B99B';
-const RING_OUT_COLOR = '#EF4444';
-const RING_SELECTION_COLOR = '#FFFFFF';
-
-function toCanvasX(plateX: number): number {
-  return ((plateX - PLOT_X_MIN) / (PLOT_X_MAX - PLOT_X_MIN)) * CANVAS_WIDTH;
+// ── Conversion helpers ───────────────────────────────────────────────────────
+function toCanvasX(x: number): number {
+  return ((x - X_MIN) / (X_MAX - X_MIN)) * CANVAS_W;
+}
+function toCanvasY(z: number): number {
+  return (1 - (z - Z_MIN) / Z_RANGE) * CANVAS_H;
 }
 
-function toCanvasY(plateZ: number): number {
-  // Invert: higher plate_z → smaller Y (top of screen)
-  return (1 - (plateZ - PLOT_Z_MIN) / (PLOT_Z_MAX - PLOT_Z_MIN)) * CANVAS_HEIGHT;
-}
+// ── Zone box in canvas coordinates ───────────────────────────────────────────
+const SZ_LEFT   = toCanvasX(SZ_X_MIN);
+const SZ_TOP    = toCanvasY(SZ_Z_MAX);
+const SZ_RIGHT  = toCanvasX(SZ_X_MAX);
+const SZ_BOTTOM = toCanvasY(SZ_Z_MIN);
+const SZ_W      = SZ_RIGHT - SZ_LEFT;
+const SZ_H      = SZ_BOTTOM - SZ_TOP;
 
-function szToCanvas(x: number, z: number): { left: number; top: number } {
-  return { left: toCanvasX(x), top: toCanvasY(z) };
-}
+// ── 3×3 inner grid ───────────────────────────────────────────────────────────
+const GRID_V = [1, 2].map(i => SZ_LEFT + (SZ_W / 3) * i);
+const GRID_H = [1, 2].map(i => SZ_TOP  + (SZ_H / 3) * i);
 
-const szTopLeft = szToCanvas(SZ_X_MIN, SZ_Z_MAX);
-const szBottomRight = szToCanvas(SZ_X_MAX, SZ_Z_MIN);
-const SZ_LEFT = szTopLeft.left;
-const SZ_TOP = szTopLeft.top;
-const SZ_WIDTH = szBottomRight.left - szTopLeft.left;
-const SZ_HEIGHT = szBottomRight.top - szTopLeft.top;
+// ── Home-plate shape dimensions ───────────────────────────────────────────────
+const PLATE_W  = SZ_W * 0.72;
+const PLATE_H  = 12;
+const PLATE_X  = CANVAS_W / 2 - PLATE_W / 2;
+const PLATE_Y  = CANVAS_H - 2;   // bottom of canvas
 
-// Inner grid line positions (2 vertical, 2 horizontal inside the zone)
-const innerVerticals = [1, 2].map(i =>
-  toCanvasX(SZ_X_THIRDS[i]) - SZ_LEFT
-);
-const innerHorizontals = [1, 2].map(i =>
-  toCanvasY(SZ_Z_THIRDS[3 - i]) - SZ_TOP // flip for display
-);
+// ── Marker radii ─────────────────────────────────────────────────────────────
+const R_LATEST = 12;
+const R_OLDER  = 9;
+const R_HALO   = 20;
 
+// ── Outcome ring ─────────────────────────────────────────────────────────────
+const RING_HIT_COLOR  = COLORS.teal;
+const RING_OUT_COLOR  = COLORS.resultStrike;
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 interface Props {
   pitches: Pitch[];
   selectedPitchNumber: number | null;
   onPitchPress: (pitch: Pitch) => void;
-  /**
-   * Classified batted-ball outcome for the at-bat, or null.
-   * Pre-computed by AtBatScreen: null until isComplete, then classifyBattedBall(atBat.outcome).
-   * Only the final pitch (number === finalPitchNumber) uses this value.
-   */
   revealedOutcome: 'hit' | 'out' | null;
-  /**
-   * The pitch.number of the last pitch in the at-bat.
-   * Derived by AtBatScreen from the actual number field of the last pitch.
-   */
   finalPitchNumber: number | null;
-  /**
-   * When set, only these pitch numbers are fully visible; all other revealed
-   * pitches are dimmed to 30% opacity. null/undefined = no dimming.
-   */
   evidenceHighlight?: number[] | null;
 }
 
@@ -113,199 +93,213 @@ export default function StrikeZone({
   finalPitchNumber,
   evidenceHighlight,
 }: Props) {
+  const latestNumber = pitches.length > 0 ? pitches[pitches.length - 1].number : null;
+
   return (
-    <View style={styles.wrapper}>
-      <Text style={styles.sectionTitle}>STRIKE ZONE</Text>
-      <Text style={styles.approxNote}>Approx. boundaries · ~1.5–3.5 ft vertical</Text>
+    <View style={[styles.canvas, { width: CANVAS_W, height: CANVAS_H + PLATE_H + 4 }]}>
 
-      {/* Outer canvas */}
-      <View style={[styles.canvas, { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }]}>
+      {/* ── Zone outline ───────────────────────────────────────────────────── */}
+      <View style={[styles.szBox, { left: SZ_LEFT, top: SZ_TOP, width: SZ_W, height: SZ_H }]}>
+        {/* Faint 3×3 inner grid */}
+        {GRID_V.map((x, i) => (
+          <View key={`v${i}`} style={[styles.gridLineV, { left: x - SZ_LEFT }]} />
+        ))}
+        {GRID_H.map((y, i) => (
+          <View key={`h${i}`} style={[styles.gridLineH, { top: y - SZ_TOP }]} />
+        ))}
+      </View>
 
-        {/* Strike zone box */}
-        <View style={[styles.szBox, { left: SZ_LEFT, top: SZ_TOP, width: SZ_WIDTH, height: SZ_HEIGHT }]}>
-          {/* 3×3 inner grid lines */}
-          {innerVerticals.map((x, i) => (
-            <View key={`v${i}`} style={[styles.gridLineV, { left: x }]} />
-          ))}
-          {innerHorizontals.map((y, i) => (
-            <View key={`h${i}`} style={[styles.gridLineH, { top: y }]} />
-          ))}
-        </View>
+      {/* ── Home-plate shape ───────────────────────────────────────────────── */}
+      <View style={[styles.plate, { left: PLATE_X, top: PLATE_Y, width: PLATE_W }]} />
 
-        {/* Zone boundary labels */}
-        <Text style={[styles.boundaryLabel, { left: SZ_LEFT - 2, top: SZ_TOP - 16 }]}>3.5 ft ↑</Text>
-        <Text style={[styles.boundaryLabel, { left: SZ_LEFT - 2, top: SZ_TOP + SZ_HEIGHT + 2 }]}>1.5 ft ↓</Text>
+      {/* ── Pitch markers ──────────────────────────────────────────────────── */}
+      {pitches.map((pitch) => {
+        const isLatest   = pitch.number === latestNumber;
+        const isFinal    = pitch.number === finalPitchNumber;
+        const isSelected = pitch.number === selectedPitchNumber;
+        const r          = isLatest ? R_LATEST : R_OLDER;
+        const hitBox     = R_HALO; // touch target always uses halo size
 
-        {/* Plate width indicator at bottom */}
-        <Text style={[styles.boundaryLabel, {
-          left: SZ_LEFT,
-          top: SZ_TOP + SZ_HEIGHT + 18,
-          width: SZ_WIDTH,
-          textAlign: 'center',
-        }]}>
-          ← 17 in →
-        </Text>
+        const rawCx = toCanvasX(pitch.plate_x);
+        const rawCy = toCanvasY(pitch.plate_z);
+        // Clamp to canvas edges (keep center within canvas)
+        const cx = Math.max(r, Math.min(CANVAS_W - r, rawCx));
+        const cy = Math.max(r, Math.min(CANVAS_H - r, rawCy));
 
-        {/* Pitch markers */}
-        {pitches.map((pitch) => {
-          const cx = toCanvasX(pitch.plate_x);
-          const cy = toCanvasY(pitch.plate_z);
-          const color = getPitchTypeColor(pitch.type);
-          const isSelected = pitch.number === selectedPitchNumber;
-          const isFinalPitch = pitch.number === finalPitchNumber;
-          // Evidence dimming: when active, non-evidence pitches dim to 30%
-          const isDimmed =
-            evidenceHighlight != null &&
-            evidenceHighlight.length > 0 &&
-            !evidenceHighlight.includes(pitch.number);
+        const isDimmed =
+          evidenceHighlight != null &&
+          evidenceHighlight.length > 0 &&
+          !evidenceHighlight.includes(pitch.number);
 
-          // Outcome ring: only the final pitch, only when revealedOutcome is set
-          const showOutcomeRing = isFinalPitch && revealedOutcome !== null;
-          const outcomeRingColor = revealedOutcome === 'hit' ? RING_HIT_COLOR : RING_OUT_COLOR;
+        const cat        = getResultCategory(pitch.result);
+        const color      = getResultColor(pitch.result);
+        const isBall     = cat === 'ball';
 
-          // Center of the marker in canvas coordinates
-          const markerCenterX = cx - MARKER_RADIUS;
-          const markerCenterY = cy - MARKER_RADIUS;
+        // Outcome ring on final pitch when complete
+        const showOutcomeRing = isFinal && revealedOutcome !== null;
+        const outcomeRingColor = revealedOutcome === 'hit' ? RING_HIT_COLOR : RING_OUT_COLOR;
 
-          return (
-            <View
-              key={pitch.number}
+        const opacity = isDimmed ? 0.3 : isLatest ? 1 : 0.5;
+
+        const containerSize = hitBox * 2;
+
+        return (
+          <View
+            key={pitch.number}
+            style={[
+              styles.markerContainer,
+              {
+                left: cx - hitBox,
+                top:  cy - hitBox,
+                width: containerSize,
+                height: containerSize,
+                opacity,
+              },
+            ]}
+          >
+            {/* Halo — latest pitch only */}
+            {isLatest && (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.halo,
+                  {
+                    width: R_HALO * 2,
+                    height: R_HALO * 2,
+                    borderRadius: R_HALO,
+                    backgroundColor: color + '29', // 16% opacity
+                    left: hitBox - R_HALO,
+                    top:  hitBox - R_HALO,
+                  },
+                ]}
+              />
+            )}
+
+            {/* Outcome ring — final pitch when replay complete */}
+            {showOutcomeRing && (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    width: (r + 4) * 2,
+                    height: (r + 4) * 2,
+                    borderRadius: r + 4,
+                    borderColor: outcomeRingColor,
+                    left: hitBox - r - 4,
+                    top:  hitBox - r - 4,
+                  },
+                ]}
+              />
+            )}
+
+            {/* Selection ring — white, when tapped */}
+            {isSelected && (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.ring,
+                  {
+                    width: (r + 7) * 2,
+                    height: (r + 7) * 2,
+                    borderRadius: r + 7,
+                    borderColor: '#FFFFFF',
+                    left: hitBox - r - 7,
+                    top:  hitBox - r - 7,
+                  },
+                ]}
+              />
+            )}
+
+            {/* Marker */}
+            <TouchableOpacity
+              onPress={() => onPitchPress(pitch)}
               style={[
-                styles.markerContainer,
+                styles.marker,
                 {
-                  left: cx - SELECTION_RING_SIZE / 2,
-                  top: cy - SELECTION_RING_SIZE / 2,
-                  width: SELECTION_RING_SIZE,
-                  height: SELECTION_RING_SIZE,
-                  opacity: isDimmed ? 0.3 : 1,
+                  width: r * 2,
+                  height: r * 2,
+                  borderRadius: r,
+                  left: hitBox - r,
+                  top:  hitBox - r,
+                  // Ball: hollow with ring; others: filled
+                  backgroundColor: isBall ? COLORS.card : color,
+                  borderWidth: isBall ? 2 : 0,
+                  borderColor: isBall ? COLORS.resultBall : 'transparent',
                 },
               ]}
             >
-              {/* Selection ring — outermost layer, pointer-events none */}
-              {isSelected && (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.ring,
-                    {
-                      width: SELECTION_RING_SIZE,
-                      height: SELECTION_RING_SIZE,
-                      borderRadius: SELECTION_RING_SIZE / 2,
-                      borderColor: RING_SELECTION_COLOR,
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                    },
-                  ]}
-                />
-              )}
-
-              {/* Outcome ring — middle layer, pointer-events none */}
-              {showOutcomeRing && (
-                <View
-                  pointerEvents="none"
-                  style={[
-                    styles.ring,
-                    {
-                      width: OUTCOME_RING_SIZE,
-                      height: OUTCOME_RING_SIZE,
-                      borderRadius: OUTCOME_RING_SIZE / 2,
-                      borderColor: outcomeRingColor,
-                      position: 'absolute',
-                      left: (SELECTION_RING_SIZE - OUTCOME_RING_SIZE) / 2,
-                      top: (SELECTION_RING_SIZE - OUTCOME_RING_SIZE) / 2,
-                    },
-                  ]}
-                />
-              )}
-
-              {/* Center marker — TouchableOpacity at original 24×24 size */}
-              <TouchableOpacity
-                onPress={() => onPitchPress(pitch)}
-                style={[
-                  styles.pitchMarker,
-                  {
-                    left: markerCenterX - (cx - SELECTION_RING_SIZE / 2),
-                    top: markerCenterY - (cy - SELECTION_RING_SIZE / 2),
-                    width: MARKER_SIZE,
-                    height: MARKER_SIZE,
-                    borderRadius: MARKER_RADIUS,
-                    backgroundColor: color,
-                  },
-                ]}
-              >
-                <Text style={styles.pitchMarkerText}>{pitch.number}</Text>
-              </TouchableOpacity>
-            </View>
-          );
-        })}
-      </View>
-
-      <Text style={styles.hint}>Tap a pitch marker for details</Text>
+              <Text style={[
+                styles.markerText,
+                {
+                  fontSize: r < 12 ? 10 : 11,
+                  color: isBall ? COLORS.resultBall : '#fff',
+                },
+              ]}>
+                {pitch.number}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: { alignItems: 'center', paddingVertical: 12 },
-  sectionTitle: { fontSize: 11, fontWeight: '700', color: COLORS.muted, letterSpacing: 1.2, marginBottom: 2 },
-  approxNote: { fontSize: 10, color: COLORS.muted, marginBottom: 12, opacity: 0.7 },
-
-  canvas: { position: 'relative' },
-
+  canvas: {
+    position: 'relative',
+  },
   szBox: {
     position: 'absolute',
-    backgroundColor: COLORS.zoneBackground,
-    borderWidth: 1.5,
-    borderColor: COLORS.accent,
-    overflow: 'hidden',
+    borderWidth: 1.8,
+    borderColor: 'rgba(255,255,255,0.8)',
+    borderRadius: 5,
+    backgroundColor: 'transparent',
+    overflow: 'visible',
   },
   gridLineV: {
     position: 'absolute',
     top: 0,
     bottom: 0,
     width: 1,
-    backgroundColor: COLORS.zoneStroke,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   gridLineH: {
     position: 'absolute',
     left: 0,
     right: 0,
     height: 1,
-    backgroundColor: COLORS.zoneStroke,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
-
-  boundaryLabel: {
+  plate: {
     position: 'absolute',
-    fontSize: 9,
-    color: COLORS.muted,
-    opacity: 0.8,
+    height: 8,
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
   },
-
-  // Container that holds all three ring layers, centered on the marker
   markerContainer: {
     position: 'absolute',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-
-  // Shared style for outcome ring and selection ring (border only, transparent fill)
+  halo: {
+    position: 'absolute',
+  },
   ring: {
-    borderWidth: 2.5,
+    position: 'absolute',
+    borderWidth: 2,
     backgroundColor: 'transparent',
   },
-
-  pitchMarker: {
+  marker: {
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 3,
-    elevation: 4,
   },
-  pitchMarkerText: { fontSize: 11, fontWeight: '700', color: '#fff' },
-
-  hint: { fontSize: 10, color: COLORS.muted, marginTop: 8, opacity: 0.7 },
+  markerText: {
+    fontWeight: '700',
+    color: '#fff',
+    lineHeight: 14,
+  },
 });

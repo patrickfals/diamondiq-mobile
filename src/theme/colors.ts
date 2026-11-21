@@ -1,34 +1,47 @@
 export const COLORS = {
-  // ── Backgrounds ─────────────────────────────────────────────────────────────
-  bg: '#0A1836',
-  surface: 'rgba(14,30,62,0.85)',
-  surfaceElevated: '#0f2040',
-  surfaceSolid: '#0e1e3e',  // opaque variant for borders/legends
+  // ── Backgrounds (new palette) ────────────────────────────────────────────────
+  bg: '#070F24',
+  card: '#0E1C3D',
+  inset: '#0A1631',
+  divider: '#1B2C52',
 
-  // ── Text ────────────────────────────────────────────────────────────────────
-  text: '#EAF1FB',
-  muted: '#A9B8D0',
-  subtle: '#9FB3D3',
+  // ── Text (new palette) ───────────────────────────────────────────────────────
+  text: '#EEF3FB',
+  body: '#DCE5F4',
+  muted: '#8193B8',
+  label: '#6F82AA',
 
-  // ── Accent — electric blue ───────────────────────────────────────────────────
-  accent: '#2B8CFF',
-  accentDim: 'rgba(43,140,255,0.15)',
-  accentBorder: 'rgba(61,150,255,0.45)',
+  // ── Accent / brand (new palette) ────────────────────────────────────────────
+  accent: '#3D95FF',
+  teal: '#1FC7A6',
+  violet: '#A98BFF',
 
-  // ── Completed teal ──────────────────────────────────────────────────────────
-  teal: '#19B99B',
-  tealDim: 'rgba(25,185,155,0.15)',
+  // ── Result colors ────────────────────────────────────────────────────────────
+  resultStrike: '#F0525A',
+  resultBall: '#34B576',
+  resultFoul: '#F5A524',
+  resultInplay: '#3D95FF',
+  resultOther: '#8A99B3',
 
-  // ── Borders ─────────────────────────────────────────────────────────────────
-  border: 'rgba(61,150,255,0.45)',
-  borderSubtle: '#1e2d45',
+  // ── Type-code colors (FF / SL / CH) ─────────────────────────────────────────
+  typeFF: '#3D95FF',
+  typeSL: '#A98BFF',
+  typeCH: '#F5A524',
+  typeOther: '#8A99B3',
 
-  // ── Strike zone ─────────────────────────────────────────────────────────────
-  zoneStroke: '#2a3f5f',
-  zoneBackground: 'rgba(30,45,80,0.4)',
-
-  // ── Outcome / status ────────────────────────────────────────────────────────
-  success: '#10b981',
-  warning: '#f59e0b',
-  danger: '#ef4444',
+  // ── Legacy keys preserved so old components still compile ───────────────────
+  surface: 'rgba(14,28,61,0.85)',        // was rgba(14,30,62,0.85)
+  surfaceElevated: '#0E1C3D',            // was #0f2040 → mapped to card
+  surfaceSolid: '#0a1631',               // was #0e1e3e → mapped to inset
+  subtle: '#8193B8',                     // was #9FB3D3 → mapped to muted
+  accentDim: 'rgba(61,149,255,0.15)',
+  accentBorder: 'rgba(61,149,255,0.45)',
+  tealDim: 'rgba(31,199,166,0.15)',
+  border: 'rgba(61,149,255,0.45)',
+  borderSubtle: '#1B2C52',               // was #1e2d45 → mapped to divider
+  zoneStroke: 'rgba(255,255,255,0.06)',
+  zoneBackground: 'rgba(14,28,61,0.4)',
+  success: '#1FC7A6',                    // was #10b981 → mapped to teal
+  warning: '#F5A524',                    // was #f59e0b → mapped to resultFoul
+  danger: '#F0525A',                     // was #ef4444 → mapped to resultStrike
 };
