@@ -118,7 +118,7 @@ export default function StrikeZone({
         const isFinal    = pitch.number === finalPitchNumber;
         const isSelected = pitch.number === selectedPitchNumber;
         const r          = isLatest ? R_LATEST : R_OLDER;
-        const hitBox     = R_HALO; // touch target always uses halo size
+        const hitBox     = r + 4; // tight touch target so clustered pitches are tappable
 
         const rawCx = toCanvasX(pitch.plate_x);
         const rawCy = toCanvasY(pitch.plate_z);

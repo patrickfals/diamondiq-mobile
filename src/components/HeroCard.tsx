@@ -365,12 +365,12 @@ export default function HeroCard({
               const resLetter = getResultLetter(p.result);
               const resColor  = getResultColor(p.result);
               return (
-                <View key={p.number} style={[styles.seqRow, { opacity: isLast ? 1 : 0.75 }]}>
+                <TouchableOpacity key={p.number} style={[styles.seqRow, { opacity: isLast ? 1 : 0.75 }]}>
                   <Text style={styles.seqNum}>{p.number}</Text>
                   <Text style={[styles.seqCode, { color: codeColor }]}>{code}</Text>
                   <Text style={styles.seqVelo}>{p.velocity_mph.toFixed(1)}</Text>
                   <Text style={[styles.seqResult, { color: resColor }]}>{resLetter}</Text>
-                </View>
+                </TouchableOpacity>
               );
             })
           )}
