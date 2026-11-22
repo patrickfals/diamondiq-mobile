@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   SafeAreaView,
+  Animated,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { AtBat, Pitch } from '../types/atbat';
@@ -51,6 +52,30 @@ export default function AtBatScreen() {
   }, [status]);
 
   const replay = useReplayEngine(atBat?.pitches ?? EMPTY_PITCHES);
+
+  // ── Next-pitch progress bar ───────────────────────────────────────────────
+  const TICK_MS = 6000;
+  const barProgress = useRef(new Animated.Value(0)).current;
+  const barAnim     = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    // Stop any running animation first
+    barAnim.current?.stop();
+    barAnim.current = null;
+
+    if (replay.state.isPlaying && !replay.isComplete) {
+      barProgress.setValue(0);
+      barAnim.current = Animated.timing(barProgress, {
+        toValue: 1,
+        duration: TICK_MS,
+        useNativeDriver: false,
+      });
+      barAnim.current.start();
+    } else {
+      barProgress.setValue(0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replay.state.isPlaying, replay.state.revealedCount]);
 
   // ── Clear evidence on replay navigation ──────────────────────────────────
   useEffect(() => {
@@ -246,8 +271,35 @@ export default function AtBatScreen() {
         onHoldEnd={handleHoldEnd}
       />
 
-      {/* Gap */}
-      <View style={styles.gap} />
+      {/* ── D: Next-pitch indicator ──────────────────────────────────────── */}
+      {!replay.isComplete && (
+        <View style={styles.nextPitchRow}>
+          {replay.state.isPlaying ? (
+            <>
+              <Text style={styles.nextPitchLabel}>Next pitch</Text>
+              <View style={styles.nextPitchTrack}>
+                <Animated.View
+                  style={[
+                    styles.nextPitchFill,
+                    {
+                      width: barProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0%', '100%'],
+                      }),
+                    },
+                  ]}
+                />
+              </View>
+            </>
+          ) : replay.state.revealedCount === 0 ? (
+            <Text style={styles.nextPitchLabel}>Press Play to start</Text>
+          ) : (
+            <Text style={styles.nextPitchLabel}>Paused · press Play to continue</Text>
+          )}
+        </View>
+      )}
+      {/* Keep row height when complete so layout doesn't jump */}
+      {replay.isComplete && <View style={styles.nextPitchRow} />}
 
       {/* ── E: Controls pinned at bottom ─────────────────────────────────── */}
       <View style={styles.controls}>
@@ -395,6 +447,32 @@ const styles = StyleSheet.create({
   // ── Gap ───────────────────────────────────────────────────────────────────────
   gap: {
     height: 8,
+  },
+
+  // ── Next-pitch indicator ──────────────────────────────────────────────────────
+  nextPitchRow: {
+    height: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    gap: 8,
+  },
+  nextPitchLabel: {
+    fontSize: 11,
+    color: COLORS.muted,
+    flexShrink: 0,
+  },
+  nextPitchTrack: {
+    flex: 1,
+    height: 3,
+    backgroundColor: COLORS.divider,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  nextPitchFill: {
+    height: 3,
+    backgroundColor: COLORS.accent,
+    borderRadius: 2,
   },
 
   // ── Playback controls ─────────────────────────────────────────────────────────
