@@ -7,7 +7,7 @@ Every at-bat is a duel between pitcher and hitter, but from the stands you can't
 Built for the IBM SkillsBuild AI Experiential Learning Lab hackathon.
 
 - **Live prototype:** https://diamondiq-demo.netlify.app
-- **Demo video:** _add YouTube link_ 
+- **Demo video:** https://youtu.be/0Zo-hmRPxEk
 - **Backend repo:** https://github.com/patrickfals/diamondiq-api
 
 ![Architecture](docs/diamondiq-architecture.png)
