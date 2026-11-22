@@ -171,7 +171,7 @@ function AgentPanel({
       num: '3',
       color: COLORS.accent,
       label: 'Analyst',
-      body: `Picked the key pitches: ${evidenceLabel}.`,
+      body: `Analyzed pitches 1–${snapCount} and the count.`,
       dur: null as string | null,
       tag: null as string | null,
     },
@@ -365,7 +365,7 @@ export default function HeroCard({
               const resLetter = getResultLetter(p.result);
               const resColor  = getResultColor(p.result);
               return (
-                <TouchableOpacity key={p.number} style={[styles.seqRow, { opacity: isLast ? 1 : 0.75 }]}>
+                  <TouchableOpacity key={p.number} onPress={() => onPitchPress(p)} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }} style={[styles.seqRow, { opacity: isLast ? 1 : 0.75 }]}>
                   <Text style={styles.seqNum}>{p.number}</Text>
                   <Text style={[styles.seqCode, { color: codeColor }]}>{code}</Text>
                   <Text style={styles.seqVelo}>{p.velocity_mph.toFixed(1)}</Text>
