@@ -39,6 +39,17 @@ export default function AtBatScreen() {
   // Agent panel state
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
 
+  // Slow-load hint: show extended message after 4 s while still loading
+  const [slowLoad, setSlowLoad] = useState(false);
+  useEffect(() => {
+    if (status !== 'loading') {
+      setSlowLoad(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowLoad(true), 4000);
+    return () => clearTimeout(timer);
+  }, [status]);
+
   const replay = useReplayEngine(atBat?.pitches ?? EMPTY_PITCHES);
 
   // ── Clear evidence on replay navigation ──────────────────────────────────
@@ -158,8 +169,16 @@ export default function AtBatScreen() {
     return (
       <SafeAreaView style={styles.centered}>
         <StatusBar style="light" />
-        <ActivityIndicator size="large" color={COLORS.accent} />
-        <Text style={styles.loadingText}>Loading at-bat data…</Text>
+        <Text style={styles.loadingWordmark}>
+          Diamond<Text style={styles.loadingWordmarkAccent}>IQ</Text>
+        </Text>
+        <Text style={styles.loadingTagline}>Relive every pitch. No spoilers.</Text>
+        <ActivityIndicator size="large" color={COLORS.accent} style={styles.loadingSpinner} />
+        <Text style={styles.loadingText}>
+          {slowLoad
+            ? 'Waking up the server… the first load can take up to a minute.'
+            : 'Loading the at-bat…'}
+        </Text>
       </SafeAreaView>
     );
   }
@@ -309,7 +328,28 @@ const styles = StyleSheet.create({
     padding: 24,
   },
 
-  loadingText: { marginTop: 16, fontSize: 14, color: COLORS.muted },
+  loadingWordmark: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: COLORS.text,
+  },
+  loadingWordmarkAccent: {
+    color: COLORS.accent,
+  },
+  loadingTagline: {
+    fontSize: 14,
+    color: COLORS.muted,
+    marginTop: 8,
+  },
+  loadingSpinner: {
+    marginTop: 28,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 14,
+    color: COLORS.muted,
+    textAlign: 'center',
+  },
 
   errorIcon: { fontSize: 36, marginBottom: 12 },
   errorTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
