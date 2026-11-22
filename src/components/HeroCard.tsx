@@ -20,7 +20,6 @@ import {
 import {
   getTrace,
   TraceSummary,
-  getEvidencePitches,
   isHumanEdited,
   KnowledgeLevel,
 } from '../data/commentaryData';
@@ -56,6 +55,15 @@ function formatAvg(avg: number): string {
 function lastName(full: string): string {
   const parts = full.trim().split(/\s+/);
   return parts[parts.length - 1];
+}
+
+/** Human-readable pitch name from type code */
+function pitchName(code: string): string {
+  if (code === 'FF') return 'Fastball';
+  if (code === 'SV') return 'Slurve';
+  if (code === 'SL') return 'Slider';
+  if (code === 'CH') return 'Changeup';
+  return code; // unknown codes pass through
 }
 
 // Count dots row: 3 balls + 2 strikes
@@ -141,12 +149,6 @@ function AgentPanel({
     ? ''
     : ` Pitch ${snapCount + 1} onward and the outcome were hidden from the AI.`;
 
-  // Step 3 — evidence pitch list from revealed pitches
-  const evidencePitchNums = getEvidencePitches(revealedCount);
-  const evidenceLabel = evidencePitchNums.length > 0
-    ? evidencePitchNums.join(', ')
-    : 'none recorded';
-
   // Step 4 — human review status for the selected level
   const humanReviewed = isHumanEdited(revealedCount, selectedLevel);
 
@@ -171,7 +173,7 @@ function AgentPanel({
       num: '3',
       color: COLORS.accent,
       label: 'Analyst',
-      body: `Analyzed pitches 1–${snapCount} and the count.`,
+      body: `Got pitches 1–${snapCount} back from Pitch Scout and analyzed them with the count.`,
       dur: null as string | null,
       tag: null as string | null,
     },
@@ -245,6 +247,270 @@ function AgentPanel({
   );
 }
 
+// ── Level-aware left rail ─────────────────────────────────────────────────────
+
+function LeftRail({
+  level,
+  revealedPitches,
+  onPitchPress,
+}: {
+  level: KnowledgeLevel;
+  revealedPitches: Pitch[];
+  onPitchPress: (pitch: Pitch) => void;
+}) {
+  const isNovice   = level === 'novice';
+  const isLearning = level === 'learning';
+  const isExpert   = level === 'expert';
+
+  const label = (isNovice || isLearning) ? 'PITCHES' : 'SEQUENCE';
+
+  return (
+    <View style={styles.railCol}>
+      <Text style={styles.colLabel}>{label}</Text>
+      {revealedPitches.length === 0 ? (
+        <Text style={styles.emptyHint}>Pitches{'\n'}appear here</Text>
+      ) : (
+        revealedPitches.map((p, idx) => {
+          const isLast   = idx === revealedPitches.length - 1;
+          const code     = getPitchTypeCode(p.type);
+          const codeColor = getPitchTypeCodeColor(code);
+          const resColor  = getResultColor(p.result);
+          const resLetter = getResultLetter(p.result);
+          const cat       = getResultCategory(p.result);
+
+          // novice: dot = hollow ring for ball, filled for others
+          const isBall   = cat === 'ball';
+
+          return (
+            <TouchableOpacity
+              key={p.number}
+              onPress={() => onPitchPress(p)}
+              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+              style={[styles.railRow, { opacity: isLast ? 1 : 0.75 }]}
+            >
+              {/* column 1: number */}
+              <Text style={styles.railNum}>{p.number}</Text>
+
+              {/* column 2: name or code */}
+              {(isNovice || isLearning) ? (
+                <Text style={[styles.railName, { color: codeColor }]} numberOfLines={1}>
+                  {pitchName(code)}
+                </Text>
+              ) : (
+                /* regular / expert: code + velo */
+                <>
+                  <Text style={[styles.railCode, { color: codeColor }]}>{code}</Text>
+                  <Text style={styles.railVelo}>
+                    {isExpert ? p.velocity_mph.toFixed(1) : Math.round(p.velocity_mph).toString()}
+                  </Text>
+                </>
+              )}
+
+              {/* column 3: result indicator */}
+              {isNovice ? (
+                /* dot: hollow ring = ball, filled = others */
+                isBall ? (
+                  <View style={[styles.railDotRing, { borderColor: resColor }]} />
+                ) : (
+                  <View style={[styles.railDotFilled, { backgroundColor: resColor }]} />
+                )
+              ) : (
+                /* letter in result color */
+                <Text style={[styles.railLetter, { color: resColor }]}>{resLetter}</Text>
+              )}
+            </TouchableOpacity>
+          );
+        })
+      )}
+    </View>
+  );
+}
+
+// ── Level-aware right rail ────────────────────────────────────────────────────
+
+function RightRail({
+  level,
+  revealedPitches,
+  revealedCount,
+}: {
+  level: KnowledgeLevel;
+  revealedPitches: Pitch[];
+  revealedCount: number;
+}) {
+  // ── Shared derived data ───────────────────────────────────────────────────
+
+  // Pitch mix: code → count
+  const mixMap = new Map<string, number>();
+  for (const p of revealedPitches) {
+    const code = getPitchTypeCode(p.type);
+    mixMap.set(code, (mixMap.get(code) ?? 0) + 1);
+  }
+  const mixItems = Array.from(mixMap.entries()); // [code, count]
+
+  // Velo range
+  let veloTop: number | null = null;
+  let veloLow: number | null = null;
+  for (const p of revealedPitches) {
+    if (veloTop === null || p.velocity_mph > veloTop) veloTop = p.velocity_mph;
+    if (veloLow === null || p.velocity_mph < veloLow) veloLow = p.velocity_mph;
+  }
+
+  // ── Novice ───────────────────────────────────────────────────────────────
+  if (level === 'novice') {
+    // detect if any "in play" pitch has been revealed
+    const hasInPlay = revealedPitches.some(p => getResultCategory(p.result) === 'inplay');
+
+    return (
+      <View style={styles.railCol}>
+        <Text style={styles.colLabel}>WHAT THE DOTS MEAN</Text>
+        {/* Strike */}
+        <View style={styles.railRow}>
+          <View style={[styles.railDotFilled, { backgroundColor: COLORS.resultStrike }]} />
+          <Text style={styles.railLegendText}> Strike</Text>
+        </View>
+        {/* Ball — hollow ring */}
+        <View style={styles.railRow}>
+          <View style={[styles.railDotRing, { borderColor: COLORS.resultBall }]} />
+          <Text style={styles.railLegendText}> Ball</Text>
+        </View>
+        {/* Foul */}
+        <View style={styles.railRow}>
+          <View style={[styles.railDotFilled, { backgroundColor: COLORS.resultFoul }]} />
+          <Text style={styles.railLegendText}> Foul</Text>
+        </View>
+        {/* In play — only once revealed */}
+        {hasInPlay && (
+          <View style={styles.railRow}>
+            <View style={[styles.railDotFilled, { backgroundColor: COLORS.resultInplay }]} />
+            <Text style={styles.railLegendText}> In play</Text>
+          </View>
+        )}
+        {/* Foul rule note */}
+        <Text style={styles.railMutedNote}>Foul = strike, unless already 2</Text>
+      </View>
+    );
+  }
+
+  // ── Learning ─────────────────────────────────────────────────────────────
+  if (level === 'learning') {
+    return (
+      <View style={styles.railCol}>
+        {/* Section 1: PITCH MIX */}
+        <Text style={styles.colLabel}>PITCH MIX</Text>
+        {mixItems.length === 0 ? (
+          <Text style={styles.emptyHint}>—</Text>
+        ) : (
+          mixItems.map(([code, count]) => (
+            <View key={code} style={styles.railRow}>
+              <Text
+                style={[styles.railName, { color: getPitchTypeCodeColor(code) }]}
+                numberOfLines={1}
+              >
+                {pitchName(code)}
+              </Text>
+              <Text style={styles.railMutedValue}> ×{count}</Text>
+            </View>
+          ))
+        )}
+        {/* Section 2: SPEED */}
+        {veloTop !== null && (
+          <>
+            <Text style={[styles.colLabel, { marginTop: 6 }]}>SPEED</Text>
+            <Text style={styles.railStatLine}>
+              {Math.round(veloTop)}–{Math.round(veloLow!)} mph
+            </Text>
+          </>
+        )}
+      </View>
+    );
+  }
+
+  // ── Regular ──────────────────────────────────────────────────────────────
+  if (level === 'regular') {
+    return (
+      <View style={styles.railCol}>
+        {/* Section 1: PITCH MIX with bars */}
+        <Text style={styles.colLabel}>PITCH MIX</Text>
+        {mixItems.length === 0 ? (
+          <Text style={styles.emptyHint}>—</Text>
+        ) : (
+          mixItems.map(([code, count]) => (
+            <PitchMixRow key={code} code={code} count={count} total={revealedCount} />
+          ))
+        )}
+        {/* Section 2: VELO */}
+        {veloTop !== null && (
+          <>
+            <Text style={[styles.colLabel, { marginTop: 6 }]}>VELO</Text>
+            <Text style={styles.railStatLine}>
+              {Math.round(veloTop)}–{Math.round(veloLow!)} mph
+            </Text>
+          </>
+        )}
+      </View>
+    );
+  }
+
+  // ── Expert ───────────────────────────────────────────────────────────────
+  // Section 1: ARSENAL — per type: code, pct, avg velo
+  const arsenalItems = mixItems.map(([code, count]) => {
+    const pitches = revealedPitches.filter(p => getPitchTypeCode(p.type) === code);
+    const avgVelo = pitches.reduce((s, p) => s + p.velocity_mph, 0) / pitches.length;
+    const pct = revealedCount > 0 ? Math.round((count / revealedCount) * 100) : 0;
+    return { code, pct, avgVelo };
+  });
+
+  // Section 3: 2-STRIKE FOULS
+  // fouls thrown when count already had 2 strikes
+  let twoStrikeFouls = 0;
+  for (const p of revealedPitches) {
+    // count_after_pitch reflects after; we need strikes BEFORE this pitch
+    // = previous pitch's count_after_pitch.strikes, or 0 for pitch 1
+    const idx = revealedPitches.indexOf(p);
+    const strikesBefore = idx === 0 ? 0 : revealedPitches[idx - 1].count_after_pitch.strikes;
+    if (strikesBefore === 2 && getResultCategory(p.result) === 'foul') {
+      twoStrikeFouls++;
+    }
+  }
+
+  return (
+    <View style={styles.railCol}>
+      {/* Section 1: ARSENAL */}
+      <Text style={styles.colLabel}>ARSENAL</Text>
+      {arsenalItems.length === 0 ? (
+        <Text style={styles.emptyHint}>—</Text>
+      ) : (
+        <>
+          <View style={styles.railRow}>
+            <Text style={[styles.arsHead, { width: 20 }]}> </Text>
+            <Text style={[styles.arsHead, { width: 26, textAlign: 'right' }]}>USE</Text>
+            <Text style={[styles.arsHead, { width: 30, textAlign: 'right' }]}>AVG</Text>
+          </View>
+          {arsenalItems.map(({ code, pct, avgVelo }) => (
+            <View key={code} style={styles.railRow}>
+              <Text style={[styles.arsCell, { width: 20, fontWeight: '700', color: getPitchTypeCodeColor(code) }]}>{code}</Text>
+              <Text style={[styles.arsCell, { width: 26, textAlign: 'right' }]}>{pct}%</Text>
+              <Text style={[styles.arsCell, { width: 30, textAlign: 'right', color: COLORS.muted }]}>{avgVelo.toFixed(1)}</Text>
+            </View>
+          ))}
+        </>
+      )}
+      {/* Section 2: VELO */}
+      {veloTop !== null && (
+        <>
+          <Text style={[styles.colLabel, { marginTop: 6 }]}>VELO</Text>
+          <Text style={styles.railStatLine}>
+            {veloTop.toFixed(1)} / {veloLow!.toFixed(1)}
+          </Text>
+        </>
+      )}
+      {/* Section 3: 2-STRIKE FOULS */}
+      <Text style={[styles.colLabel, { marginTop: 6 }]}>2-STRIKE FOULS</Text>
+      <Text style={styles.railStatLine}>{twoStrikeFouls}</Text>
+    </View>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function HeroCard({
@@ -258,7 +524,7 @@ export default function HeroCard({
   evidenceHighlight,
   selectedPitchNumber,
   onPitchPress,
-  onAgentPanelOpen,
+  onAgentPanelOpen: _onAgentPanelOpen,
   agentPanelOpen,
   onAgentPanelClose,
   selectedLevel,
@@ -275,22 +541,6 @@ export default function HeroCard({
   // Outcome pill color
   const outcomeIsMiss = revealedOutcome === 'out';
   const outcomePillColor = outcomeIsMiss ? COLORS.resultStrike : COLORS.teal;
-
-  // ── Pitch-mix: type codes seen so far ────────────────────────────────────
-  const mixMap = new Map<string, number>();
-  for (const p of revealedPitches) {
-    const code = getPitchTypeCode(p.type);
-    mixMap.set(code, (mixMap.get(code) ?? 0) + 1);
-  }
-  const mixItems = Array.from(mixMap.entries()); // [code, count]
-
-  // Velo range from revealed pitches
-  let veloTop: number | null = null;
-  let veloLow: number | null = null;
-  for (const p of revealedPitches) {
-    if (veloTop === null || p.velocity_mph > veloTop) veloTop = p.velocity_mph;
-    if (veloLow === null || p.velocity_mph < veloLow) veloLow = p.velocity_mph;
-  }
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const avg = atBat.batter_stats?.avg;
@@ -350,31 +600,14 @@ export default function HeroCard({
       {/* ── Divider ──────────────────────────────────────────────────────── */}
       <View style={styles.divider} />
 
-      {/* ── Row 2: Sequence | Zone | Mix ────────────────────────────────── */}
+      {/* ── Row 2: Left rail | Zone | Right rail ────────────────────────── */}
       <View style={styles.row2}>
-        {/* Left: Sequence */}
-        <View style={styles.seqCol}>
-          <Text style={styles.colLabel}>SEQUENCE</Text>
-          {revealedPitches.length === 0 ? (
-            <Text style={styles.emptyHint}>Pitches{'\n'}appear here</Text>
-          ) : (
-            revealedPitches.map((p, idx) => {
-              const isLast = idx === revealedPitches.length - 1;
-              const code   = getPitchTypeCode(p.type);
-              const codeColor = getPitchTypeCodeColor(code);
-              const resLetter = getResultLetter(p.result);
-              const resColor  = getResultColor(p.result);
-              return (
-                  <TouchableOpacity key={p.number} onPress={() => onPitchPress(p)} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }} style={[styles.seqRow, { opacity: isLast ? 1 : 0.75 }]}>
-                  <Text style={styles.seqNum}>{p.number}</Text>
-                  <Text style={[styles.seqCode, { color: codeColor }]}>{code}</Text>
-                  <Text style={styles.seqVelo}>{p.velocity_mph.toFixed(1)}</Text>
-                  <Text style={[styles.seqResult, { color: resColor }]}>{resLetter}</Text>
-                </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
+        {/* Left rail */}
+        <LeftRail
+          level={selectedLevel}
+          revealedPitches={revealedPitches}
+          onPitchPress={onPitchPress}
+        />
 
         {/* Center: Strike zone */}
         <View style={styles.zoneCol}>
@@ -388,30 +621,12 @@ export default function HeroCard({
           />
         </View>
 
-        {/* Right: Pitch mix */}
-        <View style={styles.mixCol}>
-          <Text style={styles.colLabel}>PITCH MIX</Text>
-          {mixItems.length === 0 ? (
-            <Text style={styles.emptyHint}>—</Text>
-          ) : (
-            mixItems.map(([code, count]) => (
-              <PitchMixRow
-                key={code}
-                code={code}
-                count={count}
-                total={revealedCount}
-              />
-            ))
-          )}
-          {/* Velo */}
-          {veloTop !== null && (
-            <View style={styles.veloSection}>
-              <Text style={styles.colLabel}>VELO</Text>
-              <Text style={styles.veloVal}>{veloTop!.toFixed(1)} top</Text>
-              <Text style={styles.veloVal}>{veloLow!.toFixed(1)} low</Text>
-            </View>
-          )}
-        </View>
+        {/* Right rail */}
+        <RightRail
+          level={selectedLevel}
+          revealedPitches={revealedPitches}
+          revealedCount={revealedCount}
+        />
       </View>
 
       {/* ── Row 3: Latest pitch line ─────────────────────────────────────── */}
@@ -558,58 +773,122 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
-  // Sequence column
-  seqCol: {
+  // ── Rail columns (left & right, 76px each) ─────────────────────────────────
+  railCol: {
     width: 76,
-    marginRight: 2,
-  },
-  seqRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-    gap: 1,
-  },
-  seqNum: {
-    fontSize: 11,
-    color: COLORS.label,
-    width: 14,
-    textAlign: 'right',
-  },
-  seqCode: {
-    fontSize: 11,
-    fontWeight: '700',
-    width: 20,
-    textAlign: 'center',
-  },
-  seqVelo: {
-    fontSize: 11,
-    color: COLORS.muted,
-    width: 29,
-    textAlign: 'right',
-  },
-  seqResult: {
-    fontSize: 11,
-    fontWeight: '700',
-    width: 11,
-    textAlign: 'center',
-  },
-  emptyHint: {
-    fontSize: 10,
-    color: COLORS.muted,
-    lineHeight: 15,
   },
 
-  // Zone column
+  // Rail row: single line, tight layout
+  railRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 16,           // matches lineHeight 16 — one line per row
+    marginBottom: 0,
+    overflow: 'hidden',
+  },
+  railNum: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: COLORS.label,
+    width: 13,
+    textAlign: 'right',
+  },
+  // pitch name (novice / learning): compact, truncates if needed
+  railName: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+    flex: 1,
+    marginLeft: 3,
+  },
+  // type code (regular / expert)
+  railCode: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+    width: 20,
+    marginLeft: 3,
+    textAlign: 'center',
+  },
+  // velocity (regular / expert)
+  railVelo: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: COLORS.muted,
+    flex: 1,
+    textAlign: 'right',
+  },
+  // result letter
+  railLetter: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '700',
+    width: 10,
+    textAlign: 'center',
+  },
+  // 8px dot — filled
+  railDotFilled: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 2,
+  },
+  // 8px dot — hollow ring (ball)
+  railDotRing: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    backgroundColor: 'transparent',
+    marginLeft: 2,
+  },
+  // Right-rail: legend text (novice "WHAT THE DOTS MEAN")
+  railLegendText: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: COLORS.text,
+  },
+  // Right-rail: muted footnote (novice rule note)
+  railMutedNote: {
+    fontSize: 9,
+    lineHeight: 13,
+    color: COLORS.muted,
+    marginTop: 4,
+    flexWrap: 'wrap',
+  },
+  // Right-rail: muted value inline (learning ×count, expert pct·avg)
+  railMutedValue: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: COLORS.muted,
+    flexShrink: 1,
+  },
+  // Right-rail: single stat line (speed, velo, 2-strike fouls count)
+  railStatLine: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: COLORS.muted,
+  },
+    arsHead: {
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    color: COLORS.label,
+    lineHeight: 16,
+  },
+  arsCell: {
+    fontSize: 10,
+    lineHeight: 16,
+    color: COLORS.text,
+  },
+
+  // ── Zone column ───────────────────────────────────────────────────────────────
   zoneCol: {
     flex: 1,
     alignItems: 'center',
   },
 
-  // Mix column
-  mixCol: {
-    width: 76,
-    marginLeft: 2,
-  },
+  // ── Pitch-mix row (regular level, right rail) ─────────────────────────────────
   mixRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -638,13 +917,11 @@ const styles = StyleSheet.create({
     height: 3,
     borderRadius: 2,
   },
-  veloSection: {
-    marginTop: 8,
-  },
-  veloVal: {
-    fontSize: 11,
+
+  emptyHint: {
+    fontSize: 10,
     color: COLORS.muted,
-    marginBottom: 1,
+    lineHeight: 15,
   },
 
   // ── Row 3 ─────────────────────────────────────────────────────────────────────

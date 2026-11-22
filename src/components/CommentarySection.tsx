@@ -147,14 +147,12 @@ export default function CommentarySection({
       {/* ── Agent strip — fixed at bottom (only when pitch revealed) ───── */}
       {revealedCount > 0 && (
         <View style={styles.agentStrip}>
-          {/* Show icon only ("◆") to save space instead of "Analyst" */}
-          <Text style={[styles.agentIcon, { color: COLORS.accent }]}>◆</Text>
-          <Text style={styles.agentSep}>›</Text>
-          <Text style={[styles.agentIcon, { color: COLORS.teal }]}>✓</Text>
-          <Text style={styles.agentName}>Scout 1–{revealedCount}</Text>
-          <Text style={styles.agentSep}>›</Text>
-          <Text style={[styles.agentIcon, { color: COLORS.violet }]}>✦</Text>
-          <Text style={styles.agentName}>Fan</Text>
+          <View style={styles.agentDots}>
+            <View style={[styles.agentDot, { backgroundColor: COLORS.accent }]} />
+            <View style={[styles.agentDot, { backgroundColor: COLORS.teal }]} />
+            <View style={[styles.agentDot, { backgroundColor: COLORS.violet }]} />
+          </View>
+          <Text style={styles.agentName}>Made by 3 IBM agents</Text>
           <View style={styles.agentSpacer} />
           <TouchableOpacity
             onPress={onDetailsPress}
@@ -168,7 +166,6 @@ export default function CommentarySection({
     </View>
   );
 }
-
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -265,6 +262,16 @@ const styles = StyleSheet.create({
   agentName: {
     fontSize: 11,
     color: COLORS.muted,
+  },
+    agentDots: {
+    flexDirection: 'row',
+    gap: 4,
+    marginRight: 6,
+  },
+  agentDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
   agentSep: {
     fontSize: 11,
